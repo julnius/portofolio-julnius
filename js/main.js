@@ -31,15 +31,17 @@ document.querySelectorAll(".reveal").forEach((element) => {
 document.getElementById("year").textContent = new Date().getFullYear();
 
 
+
 /* =========================================
-   GLOBAL CYBER GRID 3D ANIMATION
+   INTERACTIVE CYBER GRID 3D ANIMATION
+   Mouse Interaction + Click Ripple Effect
 ========================================= */
 
 const cyberCanvas = document.getElementById("cyber-background");
 
 if (cyberCanvas) {
+
     const scene = new THREE.Scene();
-    scene.background = null;
 
     const camera = new THREE.PerspectiveCamera(
         55,
@@ -57,15 +59,23 @@ if (cyberCanvas) {
         antialias: true
     });
 
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
-    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(
+        Math.min(window.devicePixelRatio, 1.5)
+    );
 
-    // Warna ungu digital
-    const purple = new THREE.Color("#9b4dff");
+    renderer.setSize(
+        window.innerWidth,
+        window.innerHeight
+    );
+
+    // Warna utama
+    const purple = new THREE.Color("#ff3b2f");
 
     // Membuat permukaan wireframe
+    const segments = window.innerWidth < 768 ? 85 : 120;
+
     const geometry = new THREE.PlaneGeometry(
-        150, 150, 120, 120
+        150, 150, segments, segments
     );
 
     geometry.rotateX(-Math.PI / 2);
@@ -77,58 +87,223 @@ if (cyberCanvas) {
         opacity: 0.42
     });
 
-    const terrain = new THREE.Mesh(geometry, material);
+    const terrain = new THREE.Mesh(
+        geometry,
+        material
+    );
 
     terrain.position.set(0, -8, -25);
     scene.add(terrain);
 
-    // Menyimpan posisi awal setiap titik
+    // Menyimpan posisi awal vertex
     const positions = geometry.attributes.position;
+
     const originalPositions = positions.array.slice();
 
-    // Cahaya tambahan
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
-    scene.add(ambientLight);
+    // Raycaster untuk mendeteksi posisi mouse
+    const raycaster = new THREE.Raycaster();
 
+    const pointer = new THREE.Vector2();
+
+    let mousePosition = null;
+
+    let isPointerInside = false;
+
+    // Menyimpan gelombang klik
+    const ripples = [];
+
+    const maxRipples = 8;
+
+    // Membaca posisi mouse
+    function updatePointer(event) {
+
+        pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
+
+        pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+        raycaster.setFromCamera(pointer, camera);
+
+        const intersections = raycaster.intersectObject(terrain);
+
+        if (intersections.length > 0) {
+
+            mousePosition = intersections[0].point.clone();
+
+            isPointerInside = true;
+
+        } else {
+
+            isPointerInside = false;
+
+        }
+    }
+
+    // Interaksi gerakan mouse
+    window.addEventListener("pointermove", (event) => {
+
+        updatePointer(event);
+
+    }, { passive: true });
+
+    // Interaksi klik / sentuhan
+    window.addEventListener("pointerdown", (event) => {
+
+        updatePointer(event);
+
+        if (!mousePosition) return;
+
+        // Maksimal 8 gelombang bersamaan
+        if (ripples.length >= maxRipples) {
+            ripples.shift();
+        }
+
+        ripples.push({
+            x: mousePosition.x,
+            z: mousePosition.z,
+            start: performance.now(),
+            strength: 3.2
+        });
+
+    }, { passive: true });
+
+    // Menghentikan efek hover ketika pointer keluar
+    document.addEventListener("pointerleave", () => {
+
+        isPointerInside = false;
+
+    });
+
+    // Animasi utama
     let animationFrame;
 
     function animate(time) {
+
         animationFrame = requestAnimationFrame(animate);
 
         const t = time * 0.0005;
 
-        // Gelombang bergerak pada permukaan grid
+        const now = performance.now();
+
+        // Menghapus gelombang yang sudah selesai
+        for (let i = ripples.length - 1; i >= 0; i--) {
+
+            if (now - ripples[i].start > 2600) {
+
+                ripples.splice(i, 1);
+
+            }
+
+        }
+
+        // Menggerakkan setiap titik grid
         for (let i = 0; i < positions.count; i++) {
+
             const x = originalPositions[i * 3];
+
             const z = originalPositions[i * 3 + 2];
 
-            const wave =
+            // Gelombang dasar
+            let wave =
+
                 Math.sin(x * 0.09 + t * 2) * 1.2 +
+
                 Math.cos(z * 0.08 + t * 1.5) * 1.0 +
+
                 Math.sin((x + z) * 0.04 + t) * 0.7;
 
+            // Efek gelombang ketika mouse bergerak
+            if (isPointerInside && mousePosition) {
+
+                const dx = x + terrain.position.x - mousePosition.x;
+
+                const dz = z + terrain.position.z - mousePosition.z;
+
+                const distance = Math.sqrt(dx * dx + dz * dz);
+
+                const hoverWave =
+                    Math.exp(-distance * distance / 65) * 0.65;
+
+                wave += hoverWave;
+
+            }
+
+            // Efek riak ketika layar diklik
+            for (const ripple of ripples) {
+
+                const age = (now - ripple.start) / 1000;
+
+                const dx = x + terrain.position.x - ripple.x;
+
+                const dz = z + terrain.position.z - ripple.z;
+
+                const distance = Math.sqrt(dx * dx + dz * dz);
+
+                const radius = distance - age * 19;
+
+                const attenuation = Math.exp(-age * 1.7);
+
+                const rippleWave =
+
+                    Math.sin(radius * 0.65) *
+
+                    Math.exp(-Math.pow(radius / 22, 2)) *
+
+                    attenuation *
+
+                    ripple.strength;
+
+                wave += rippleWave;
+
+            }
+
             positions.setY(i, wave);
+
         }
 
         positions.needsUpdate = true;
-        geometry.computeVertexNormals();
 
+        // Render scene
         renderer.render(scene, camera);
+
     }
 
     animate(0);
 
-    // Menyesuaikan canvas dengan ukuran layar
+    // Responsive resize
     window.addEventListener("resize", () => {
+
         camera.aspect = window.innerWidth / window.innerHeight;
+
         camera.updateProjectionMatrix();
 
-        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setSize(
+            window.innerWidth,
+            window.innerHeight
+        );
+
         renderer.setPixelRatio(
             Math.min(window.devicePixelRatio, 1.5)
         );
+
     });
+
+    // Membersihkan animasi ketika tab tidak aktif
+    document.addEventListener("visibilitychange", () => {
+
+        if (document.hidden) {
+
+            cancelAnimationFrame(animationFrame);
+
+        } else {
+
+            animate(0);
+
+        }
+
+    });
+
 }
+
 
 
 /* =========================================
